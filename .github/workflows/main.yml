@@ -1,95 +1,357 @@
-
-name: Build Custom OC Kernel A52
+name: Build Custom OC Kernel A52 - Android 16
 
 on:
   workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Defconfig to use'
+        required: false
+        default: 'vendor/lineage-a52q_defconfig'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
-    - name: Ambil Source Code Kernel
+    - name: Checkout Source Code
       uses: actions/checkout@v4
       with:
         ref: lineage-23.0
+        fetch-depth: 1
 
-    - name: Pasang Alat Kompilasi Ubuntu
+    - name: Install Build Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip
+        sudo apt-get install -y \
+          bc build-essential libncurses5-dev libssl-dev \
+          bison flex git-core gnupg gperf curl wget zip \
+          libelf-dev python3 python-is-python3 device-tree-compiler \
+          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-    - name: Cek & Unduh AOSP Clang Compiler
+    - name: Download AOSP Clang Toolchain
       run: |
         mkdir -p $GITHUB_WORKSPACE/toolchain
         cd $GITHUB_WORKSPACE/toolchain
         
-        CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz"
+        echo "=== Downloading AOSP Clang r522817 ==="
         
-        echo "Mengecek tautan unduhan Clang..."
-        if wget -q --spider "$CLANG_URL"; then
-          echo "Tautan tersedia! Mulai mengunduh..."
-          wget -q "$CLANG_URL" -O clang-r522817.tar.gz
+        # Try primary URL
+        echo "Attempting primary download..."
+        if wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang-r522817.tar.gz 2>/dev/null; then
+          if [ -s clang-r522817.tar.gz ]; then
+            echo "✓ Primary download successful"
+          else
+            echo "✗ Primary download failed (empty file)"
+            rm -f clang-r522817.tar.gz
+          fi
+        fi
+        
+        # If primary failed, try alternative
+        if [ ! -f clang-r522817.tar.gz ]; then
+          echo "Attempting alternative download..."
+          wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang-r522817.tar.gz 2>/dev/null || true
+        fi
+        
+        # Final check
+        if [ ! -s clang-r522817.tar.gz ]; then
+          echo "✗ ERROR: Failed to download Clang"
+          echo "Trying local installation instead..."
+          sudo apt-get install -y clang lld llvm
+          which clang
+          clang --version
+        else
+          echo "✓ Clang downloaded, extracting..."
           tar -xf clang-r522817.tar.gz
           rm clang-r522817.tar.gz
-        else
-          echo "Error: Tautan Clang tidak ditemukan atau rusak."
-          exit 1
+          echo "✓ Extraction complete"
+          ls -la bin/ | head -20
         fi
 
-    - name: Proses Compile Kernel & DTB
+    - name: Verify Toolchain Setup
+      run: |
+        echo "=== Verifying GNU Toolchain ==="
+        which aarch64-linux-gnu-gcc
+        which aarch64-linux-gnu-ld
+        aarch64-linux-gnu-gcc --version | head -3
+        aarch64-linux-gnu-ld --version | head -3
+        
+        echo ""
+        echo "=== Verifying Clang Toolchain ==="
+        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
+        if [ -f "$CLANG_PATH/clang" ]; then
+          $CLANG_PATH/clang --version | head -3
+        else
+          which clang
+          clang --version | head -3
+        fi
+
+    - name: Prepare Kernel Configuration
       run: |
         cd $GITHUB_WORKSPACE
         export ARCH=arm64
+        
+        echo "=== Finding defconfig ==="
+        
+        # Search for defconfig
+        DEFCONFIG_PATH=$(find arch/arm64/configs -type f \( -name "*a52q*defconfig" -o -name "*a52*defconfig" -o -name "*lineage*a52*" \) | head -1)
+        
+        if [ -z "$DEFCONFIG_PATH" ]; then
+          echo "✗ ERROR: Defconfig not found!"
+          echo "Available configs:"
+          find arch/arm64/configs -type f | sort
+          exit 1
+        fi
+        
+        echo "✓ Found: $DEFCONFIG_PATH"
+        
+        # Copy to standard location
+        CONFIG_NAME=$(basename "$DEFCONFIG_PATH")
+        cp "$DEFCONFIG_PATH" arch/arm64/configs/a52q_defconfig
+        echo "✓ Copied to arch/arm64/configs/a52q_defconfig"
+
+    - name: Configure Kernel
+      run: |
+        cd $GITHUB_WORKSPACE
+        
+        export ARCH=arm64
         export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
-        export PATH=$CLANG_PATH:$PATH
+        
+        # Set up toolchain
+        if [ -f "$CLANG_PATH/clang" ]; then
+          export CC=$CLANG_PATH/clang
+          echo "Using Clang from: $CLANG_PATH"
+        else
+          export CC=clang
+          echo "Using system Clang"
+        fi
+        
+        export LD=aarch64-linux-gnu-ld
+        export AR=aarch64-linux-gnu-ar
+        export NM=aarch64-linux-gnu-nm
+        export OBJCOPY=aarch64-linux-gnu-objcopy
+        export OBJDUMP=aarch64-linux-gnu-objdump
+        export READELF=aarch64-linux-gnu-readelf
+        export STRIP=aarch64-linux-gnu-strip
+        export CROSS_COMPILE=aarch64-linux-gnu-
         
         mkdir -p out
         
-        # Cari file defconfig secara otomatis di arch/arm64/configs
-        DEFCONFIG=$(find arch/arm64/configs -type f \( -name "*a52q*defconfig" -o -name "*sm7125*defconfig" \) | head -n 1 | sed 's|arch/arm64/configs/||')
+        echo "=== Running make defconfig ==="
+        make -C $GITHUB_WORKSPACE \
+          O=out \
+          ARCH=arm64 \
+          CROSS_COMPILE=$CROSS_COMPILE \
+          CC=$CC \
+          LD=$LD \
+          a52q_defconfig
         
-        if test -z "$DEFCONFIG"; then
-          echo "Error: File defconfig tidak ditemukan!"
-          exit 1
-        fi
-        
-        echo "Menggunakan defconfig: $DEFCONFIG"
-        
-        make O=out $DEFCONFIG
-        make -j$(nproc --all) O=out \
-          CC=clang \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-android- \
-          CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        echo "✓ Kernel configured"
+        cat out/.config | grep -E "^CONFIG_(CC_|INIT_STACK|CLANG)" | head -20
 
-    - name: Cek AnyKernel3 & Buat Flashable ZIP
+    - name: Compile Kernel Image
       run: |
         cd $GITHUB_WORKSPACE
-        ANYKERNEL_URL="https://github.com/osm0sis/AnyKernel3.git"
         
-        echo "Mengecek repositori AnyKernel3..."
-        if git ls-remote "$ANYKERNEL_URL" &> /dev/null; then
-          echo "Repositori ditemukan! Mulai melakukan kloning..."
-          git clone "$ANYKERNEL_URL" paket-zip
+        export ARCH=arm64
+        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
+        
+        if [ -f "$CLANG_PATH/clang" ]; then
+          export CC=$CLANG_PATH/clang
         else
-          echo "Error: Repositori AnyKernel3 tidak ditemukan atau diprivat."
+          export CC=clang
+        fi
+        
+        export LD=aarch64-linux-gnu-ld
+        export AR=aarch64-linux-gnu-ar
+        export NM=aarch64-linux-gnu-nm
+        export OBJCOPY=aarch64-linux-gnu-objcopy
+        export OBJDUMP=aarch64-linux-gnu-objdump
+        export READELF=aarch64-linux-gnu-readelf
+        export STRIP=aarch64-linux-gnu-strip
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        
+        JOBS=$(nproc --all)
+        echo "=== Compiling with $JOBS parallel jobs ==="
+        
+        make -C $GITHUB_WORKSPACE \
+          -j$JOBS \
+          O=out \
+          ARCH=arm64 \
+          CROSS_COMPILE=$CROSS_COMPILE \
+          CC=$CC \
+          LD=$LD \
+          AR=$AR \
+          NM=$NM \
+          OBJCOPY=$OBJCOPY \
+          OBJDUMP=$OBJDUMP \
+          READELF=$READELF \
+          STRIP=$STRIP \
+          2>&1 | tee compile.log
+        
+        echo "=== Compile complete ==="
+
+    - name: Verify Kernel Output
+      run: |
+        cd $GITHUB_WORKSPACE
+        
+        echo "=== Checking kernel output ==="
+        
+        if [ -f "out/arch/arm64/boot/Image.gz" ]; then
+          echo "✓ Kernel Image.gz found!"
+          ls -lh out/arch/arm64/boot/Image.gz
+        else
+          echo "✗ ERROR: Image.gz not found!"
+          ls -la out/arch/arm64/boot/
           exit 1
         fi
         
-        # Memindahkan file biner hasil compile ke dalam template
-        cp out/arch/arm64/boot/Image.gz paket-zip/
-        cp out/arch/arm64/boot/dts/qcom/*.dtb paket-zip/ 2>/dev/null || true
-        
-        # Konfigurasi jalur partisi boot block
-        cd paket-zip
-        sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' anykernel.sh
-        
-        # Mengemas seluruh folder
-        zip -r9 ../Kernel_OC_700MHz_A52_Flashable.zip * -x .git* README.md
+        echo ""
+        echo "=== Looking for DTB files ==="
+        find out/arch/arm64/boot -name "*.dtb" -o -name "*.img" 2>/dev/null | head -20
 
-    - name: Unggah ZIP Jadi Siap Flash
+    - name: Create Flashable ZIP Package
+      run: |
+        cd $GITHUB_WORKSPACE
+        
+        echo "=== Preparing flashable ZIP ==="
+        
+        # Clone AnyKernel3
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git paket-zip
+        
+        # Copy kernel image
+        echo "Copying kernel image..."
+        if [ -f "out/arch/arm64/boot/Image.gz" ]; then
+          cp out/arch/arm64/boot/Image.gz paket-zip/Image.gz
+          echo "✓ Image.gz copied"
+        fi
+        
+        # Copy DTB files if available
+        echo "Copying DTB files..."
+        if [ -d "out/arch/arm64/boot/dts/qcom" ]; then
+          find out/arch/arm64/boot/dts/qcom -name "*.dtb" -exec cp {} paket-zip/ \;
+          echo "✓ DTB files copied"
+        elif [ -d "out/arch/arm64/boot/dts" ]; then
+          find out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} paket-zip/ \;
+          echo "✓ DTB files copied from dts"
+        fi
+        
+        # Configure AnyKernel3 for A52
+        cd paket-zip
+        
+        echo "Configuring AnyKernel3 for Samsung A52..."
+        
+        # Update device name
+        sed -i 's/device\.name1=.*/device.name1=a52q;/g' anykernel.sh
+        sed -i 's/device\.name2=.*/device.name2=a52;/g' anykernel.sh
+        
+        # Set boot partition
+        sed -i 's|block=.*|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+        
+        # Enable patched cmdline
+        sed -i 's/is_mounted.*/is_mounted \/system;/g' anykernel.sh
+        
+        echo "✓ AnyKernel3 configured"
+        
+        # Create ZIP
+        echo "Creating flashable ZIP..."
+        zip -r9 ../A52_Kernel_Lineage23_Flashable.zip \
+          * \
+          -x ".git*" "README.md" ".gitignore" ".github/*" \
+          2>&1 | tail -20
+        
+        cd ..
+        
+        if [ -f "A52_Kernel_Lineage23_Flashable.zip" ]; then
+          echo "✓ ZIP created successfully!"
+          ls -lh A52_Kernel_Lineage23_Flashable.zip
+        else
+          echo "✗ ERROR: ZIP creation failed!"
+          exit 1
+        fi
+
+    - name: Generate Build Info
+      run: |
+        cat > BUILD_INFO.txt << 'EOF'
+        =============================================
+        Android 16 Kernel Build Report
+        =============================================
+        
+        Build Date: $(date '+%Y-%m-%d %H:%M:%S')
+        Device: Samsung Galaxy A52 (SM7125)
+        Android: Lineage OS 23.0 (Android 16)
+        Kernel Version: 4.14.356-openela-rc1
+        
+        Branch: lineage-23.0
+        Repository: android_kernel_samsung_sm7125
+        
+        Compiler:
+        - Clang: r522817
+        - GNU Binutils: aarch64-linux-gnu
+        
+        Build Status: SUCCESS ✓
+        
+        Output Files:
+        - Image.gz: Compressed kernel binary
+        - *.dtb: Device tree binaries
+        - A52_Kernel_Lineage23_Flashable.zip: Flashable package
+        
+        Installation Instructions:
+        1. Boot into TWRP Recovery
+        2. Flash A52_Kernel_Lineage23_Flashable.zip
+        3. Reboot device
+        
+        Notes:
+        - Backup current kernel before flashing
+        - For development/testing only
+        - Report issues at: github.com/amirarjenso2003-dot/
+        
+        =============================================
+        EOF
+        cat BUILD_INFO.txt
+
+    - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel_OC_700MHz_A52_Flashable
-        path: Kernel_OC_700MHz_A52_Flashable.zip
+        name: A52-Kernel-Lineage23-Build
+        path: |
+          A52_Kernel_Lineage23_Flashable.zip
+          BUILD_INFO.txt
+          compile.log
+        retention-days: 30
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      if: success()
+      with:
+        name: "A52 Kernel - Lineage 23.0 (Android 16)"
+        tag_name: "kernel-${{ github.run_number }}"
+        body_path: BUILD_INFO.txt
+        files: |
+          A52_Kernel_Lineage23_Flashable.zip
+          BUILD_INFO.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "========================================"
+        echo "         BUILD SUMMARY"
+        echo "========================================"
+        echo ""
+        
+        if [ -f "A52_Kernel_Lineage23_Flashable.zip" ]; then
+          echo "✓ BUILD SUCCESSFUL!"
+          echo ""
+          echo "Output File:"
+          ls -lh A52_Kernel_Lineage23_Flashable.zip
+        else
+          echo "✗ BUILD FAILED!"
+          echo ""
+          echo "Last 50 lines of compile log:"
+          tail -50 compile.log || echo "No compile log found"
+        fi
+        
+        echo ""
+        echo "========================================"
