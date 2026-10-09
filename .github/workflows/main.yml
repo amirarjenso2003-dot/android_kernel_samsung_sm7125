@@ -1,0 +1,85 @@
+name: Build Custom OC Kernel A52
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Ambil Source Code Kernel
+      uses: actions/checkout@v4
+      with:
+        ref: lineage-23.0
+
+    - name: Pasang Alat Kompilasi Ubuntu
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip
+
+    - name: Cek & Unduh AOSP Clang Compiler
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/toolchain
+        cd $GITHUB_WORKSPACE/toolchain
+        
+        CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz"
+        
+        echo "Mengecek tautan unduhan Clang..."
+        # Menggunakan wget --spider untuk mengecek ketersediaan file tanpa mengunduh isinya
+        if wget -q --spider "$CLANG_URL"; then
+          echo "Tautan tersedia! Mulai mengunduh..."
+          wget -q "$CLANG_URL" -O clang-r522817.tar.gz
+          tar -xf clang-r522817.tar.gz
+          rm clang-r522817.tar.gz
+        else
+          echo "Error: Tautan Clang tidak ditemukan atau rusak (Gagal merespons)."
+          exit 1 # Menghentikan proses workflow jika tautan mati
+        fi
+
+    - name: Proses Compile Kernel & DTB
+      run: |
+        cd $GITHUB_WORKSPACE
+        export ARCH=arm64
+        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
+        export PATH=$CLANG_PATH:$PATH
+        
+        mkdir -p out
+        make O=out a52q_defconfig
+        make -j$(nproc --all) O=out \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=arm-linux-androideabi-
+
+    - name: Cek AnyKernel3 & Buat Flashable ZIP
+      run: |
+        cd $GITHUB_WORKSPACE
+        ANYKERNEL_URL="https://github.com/osm0sis/AnyKernel3.git"
+        
+        echo "Mengecek repositori AnyKernel3..."
+        # Menggunakan git ls-remote untuk memverifikasi repo eksis dan publik
+        if git ls-remote "$ANYKERNEL_URL" &> /dev/null; then
+          echo "Repositori ditemukan! Mulai melakukan kloning..."
+          git clone "$ANYKERNEL_URL" paket-zip
+        else
+          echo "Error: Repositori AnyKernel3 tidak ditemukan atau diprivat."
+          exit 1 # Menghentikan proses jika repo hilang
+        fi
+        
+        # 2. Memindahkan file biner hasil compile ke dalam template
+        cp out/arch/arm64/boot/Image.gz paket-zip/
+        cp out/arch/arm64/boot/dts/qcom/*.dtb paket-zip/ 2>/dev/null || true
+        
+        # 3. Konfigurasi jalur partisi boot block
+        cd paket-zip
+        sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' anykernel.sh
+        
+        # 4. Mengemas seluruh folder
+        zip -r9 ../Kernel_OC_700MHz_A52_Flashable.zip * -x .git* README.md
+
+    - name: Unggah ZIP Jadi Siap Flash
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel_OC_700MHz_A52_Flashable
+        path: Kernel_OC_700MHz_A52_Flashable.zip
