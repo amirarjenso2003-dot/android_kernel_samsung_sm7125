@@ -34,7 +34,7 @@ jobs:
           rm clang-r522817.tar.gz
         else
           echo "Error: Tautan Clang tidak ditemukan atau rusak (Gagal merespons)."
-          exit 1 # Menghentikan proses workflow jika tautan mati
+          exit 1
         fi
 
     - name: Proses Compile Kernel & DTB
@@ -45,41 +45,11 @@ jobs:
         export PATH=$CLANG_PATH:$PATH
         
         mkdir -p out
-        make O=out a52q_defconfig
-        make -j$(nproc --all) O=out \
-          CC=clang \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-android- \
-          CROSS_COMPILE_ARM32=arm-linux-androideabi-
-
-    - name: Cek AnyKernel3 & Buat Flashable ZIP
-      run: |
+        
+        # 1. Mencari lokasi defconfig (A52 atau SM7125) secara otomatis
+        cd arch/arm64/configs
+        DEFCONFIG=$(find . -type f \( -name "*a52q*defconfig" -o -name "*sm7125*defconfig" \) | head -n 1 | sed 's|^\./||')
         cd $GITHUB_WORKSPACE
-        ANYKERNEL_URL="https://github.com/osm0sis/AnyKernel3.git"
         
-        echo "Mengecek repositori AnyKernel3..."
-        # Menggunakan git ls-remote untuk memverifikasi repo eksis dan publik
-        if git ls-remote "$ANYKERNEL_URL" &> /dev/null; then
-          echo "Repositori ditemukan! Mulai melakukan kloning..."
-          git clone "$ANYKERNEL_URL" paket-zip
-        else
-          echo "Error: Repositori AnyKernel3 tidak ditemukan atau diprivat."
-          exit 1 # Menghentikan proses jika repo hilang
-        fi
-        
-        # 2. Memindahkan file biner hasil compile ke dalam template
-        cp out/arch/arm64/boot/Image.gz paket-zip/
-        cp out/arch/arm64/boot/dts/qcom/*.dtb paket-zip/ 2>/dev/null || true
-        
-        # 3. Konfigurasi jalur partisi boot block
-        cd paket-zip
-        sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' anykernel.sh
-        
-        # 4. Mengemas seluruh folder
-        zip -r9 ../Kernel_OC_700MHz_A52_Flashable.zip * -x .git* README.md
-
-    - name: Unggah ZIP Jadi Siap Flash
-      uses: actions/upload-artifact@v4
-      with:
-        name: Kernel_OC_700MHz_A52_Flashable
-        path: Kernel_OC_700MHz_A52_Flashable.zip
+        # 2. Validasi apakah defconfig ditemukan
+        if
