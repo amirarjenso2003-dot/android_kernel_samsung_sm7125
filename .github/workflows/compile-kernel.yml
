@@ -1,0 +1,54 @@
+name: Build Custom OC Kernel A52
+
+on:
+  workflow_dispatch: # Mengaktifkan tombol pemicu manual "Run Workflow"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Ambil Source Code Kernel
+      uses: actions/checkout@v4
+      with:
+        ref: lineage-23.0
+
+    - name: Pasang Alat Kompilasi Ubuntu
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev zinc ccache bison flex git-core gnupg gperf platform-tools curl wget
+
+    - name: Unduh AOSP Clang Compiler
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/toolchain
+        cd $GITHUB_WORKSPACE/toolchain
+        # Mengunduh compiler Clang versi r522817 untuk Android 16
+        wget https://googlesource.com
+        tar -xf clang-r522817.tar.gz
+
+    - name: Proses Compile Kernel & DTB
+      run: |
+        cd $GITHUB_WORKSPACE
+        export ARCH=arm64
+        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
+        export PATH=$CLANG_PATH:$PATH
+        
+        mkdir -p out
+        
+        # Mengaktifkan berkas defconfig bawaan Galaxy A52
+        make O=out a52q_defconfig
+        
+        # Menjalankan build menggunakan multi-core server GitHub
+        make -j$(nproc --all) O=out \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android-
+
+    - name: Unggah Hasil Kernel Overclock
+      uses: actions/upload-artifact@v4
+      with:
+        name: Hasil-Kernel-OC-A52
+        path: |
+          out/arch/arm64/boot/Image.gz
+          out/arch/arm64/boot/dts/samsung/*.dtb
+          out/arch/arm64/boot/dts/qcom/*.dtb
