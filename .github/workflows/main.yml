@@ -79,12 +79,11 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Patch Source for GCC 9 Compatibility
+      - name: Clean Source Tree from Bad Patches
         run: |
           cd $GITHUB_WORKSPACE
-          if [ -f "kernel/bpf/core.c" ]; then
-            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
-          fi
+          git checkout kernel/bpf/core.c || true
+          git reset --hard HEAD || true
 
       - name: Compile Kernel (GCC 9 Mode)
         run: |
@@ -92,9 +91,9 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # Menambahkan -fgnu89-inline agar fungsi inline lama kompatibel dengan GCC 9
+          # Menambahkan flag standar kompilasi lama agar GCC 9 dapat membaca source kernel dengan mulus
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -fgnu89-inline" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -fgnu89-inline -std=gnu89" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
