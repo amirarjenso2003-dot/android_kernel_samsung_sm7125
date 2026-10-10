@@ -99,21 +99,21 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c menggunakan Python secara bersih tanpa rekursi
+          # 2. Patch kernel/bpf/core.c dengan mendeklarasikan u64 tmp di dalam fungsi __bpf_prog_run
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
               with open(path, "r") as f:
                   content = f.read()
-              old_str = "div64_u64_rem(DST, IMM, &tmp);"
-              new_str = "{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }"
-              if old_str in content and "{ u64 tmp = 0;" not in content:
-                  content = content.replace(old_str, new_str)
+              import re
+              match = re.search(r"(unsigned int __bpf_prog_run[^{]*\{)", content)
+              if match and "u64 tmp" not in content:
+                  content = content.replace(match.group(1), match.group(1) + "\n\tu64 tmp = 0;")
                   with open(path, "w") as f:
                       f.write(content)
-                  print("Successfully patched kernel/bpf/core.c")
+                  print("Successfully injected u64 tmp into __bpf_prog_run")
               else:
-                  print("Already patched or pattern not found in kernel/bpf/core.c")
+                  print("Already patched or function header not found")
           except Exception as e:
               print(f"Skipping kernel/bpf/core.c patch: {e}")
           '
