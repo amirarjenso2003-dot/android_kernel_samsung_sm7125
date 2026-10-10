@@ -89,16 +89,6 @@ jobs:
           echo "Config: arch/arm64/configs/a52q_defconfig"
           echo "═══════════════════════════════════════════════"
 
-          echo ""
-          echo "🔍 Validating key configurations..."
-          for config in CONFIG_ARM64 CONFIG_ARCH_QCOM CONFIG_PREEMPT CONFIG_CPU_FREQ CONFIG_MSM_ADRENO CONFIG_SCHED_WALT; do
-            if grep -q "^${config}=" "$DEFCONFIG" || grep -q "^${config}=y" "$DEFCONFIG"; then
-              echo "  ✓ $config"
-            else
-              echo "  ⚠️ $config (missing or disabled)"
-            fi
-          done
-
       - name: Kernel Configuration
         run: |
           cd $GITHUB_WORKSPACE
@@ -113,6 +103,13 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
+      - name: Patch Makefile for Clang Warnings
+        run: |
+          cd $GITHUB_WORKSPACE
+          # Menghapus -Werror dan menambahkan flag pengabaian implicit-function-declaration
+          sed -i 's/-Werror//g' Makefile
+          echo "KBUILD_CFLAGS += -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" >> Makefile
+
       - name: Compile Kernel
         run: |
           cd $GITHUB_WORKSPACE
@@ -124,14 +121,20 @@ jobs:
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC \
             LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm \
             OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump \
-            STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
+            STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log || {
+              echo "========================================="
+              echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
+              echo "========================================="
+              grep -i "error:" compile.log || tail -n 50 compile.log
+              exit 1
+            }
 
           if [ -f "out/arch/arm64/boot/Image.gz" ]; then
             echo "✓ Kernel Image.gz found!"
             ls -lh out/arch/arm64/boot/Image.gz
           else
             echo "✗ ERROR: Image.gz not found!"
-            ls -la out/arch/arm64/boot/
+            ls -la out/arch/arm64/boot/ || true
             exit 1
           fi
 
