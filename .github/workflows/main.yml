@@ -71,17 +71,52 @@ jobs:
           git checkout -f
           git clean -fd
 
-          # 1. Patch header magic untuk dlog_hook.c
-          if [ -f "fs/dlog_hook.c" ]; then
-            sed -i '/#include/a #include <linux/magic.h>' fs/dlog_hook.c || true
-            sed -i '/#include "dlog_hook.h"/a #ifndef SDCARDFS_SUPER_MAGIC\n#define SDCARDFS_SUPER_MAGIC 0x5dca\n#endif\n#ifndef SDFAT_SUPER_MAGIC\n#define SDFAT_SUPER_MAGIC 0x6573\n#endif\n#ifndef MSDOS_SUPER_MAGIC\n#define MSDOS_SUPER_MAGIC 0x4d44\n#endif' fs/dlog_hook.c || true
-          fi
+          # 1. Patch header magic untuk dlog_hook.c menggunakan Python
+          python3 -c '
+          path = "fs/dlog_hook.c"
+          try:
+              with open(path, "r") as f:
+                  content = f.read()
+              if "#include <linux/magic.h>" not in content:
+                  content = "#include <linux/magic.h>\n" + content
+              magic_defs = """
+              #ifndef SDCARDFS_SUPER_MAGIC
+              #define SDCARDFS_SUPER_MAGIC 0x5dca
+              #endif
+              #ifndef SDFAT_SUPER_MAGIC
+              #define SDFAT_SUPER_MAGIC 0x6573
+              #endif
+              #ifndef MSDOS_SUPER_MAGIC
+              #define MSDOS_SUPER_MAGIC 0x4d44
+              #endif
+              """
+              if "SDCARDFS_SUPER_MAGIC" not in content:
+                  content = content.replace("#include \"dlog_hook.h\"", "#include \"dlog_hook.h\"\n" + magic_defs)
+              with open(path, "w") as f:
+                  f.write(content)
+              print("Successfully patched fs/dlog_hook.c")
+          except Exception as e:
+              print(f"Skipping fs/dlog_hook.c patch: {e}")
+          '
 
-          # 2. Reset dan patch kernel/bpf/core.c secara akurat (menghindari duplikasi)
-          if [ -f "kernel/bpf/core.c" ]; then
-            git checkout kernel/bpf/core.c || true
-            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
-          fi
+          # 2. Patch kernel/bpf/core.c menggunakan Python secara bersih tanpa rekursi
+          python3 -c '
+          path = "kernel/bpf/core.c"
+          try:
+              with open(path, "r") as f:
+                  content = f.read()
+              old_str = "div64_u64_rem(DST, IMM, &tmp);"
+              new_str = "{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }"
+              if old_str in content and "{ u64 tmp = 0;" not in content:
+                  content = content.replace(old_str, new_str)
+                  with open(path, "w") as f:
+                      f.write(content)
+                  print("Successfully patched kernel/bpf/core.c")
+              else:
+                  print("Already patched or pattern not found in kernel/bpf/core.c")
+          except Exception as e:
+              print(f"Skipping kernel/bpf/core.c patch: {e}")
+          '
 
       - name: Compile Kernel with AOSP Clang
         run: |
