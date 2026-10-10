@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: '23.0'
+          ref: lineage-23.0
           fetch-depth: 1
 
       - name: Install Build Dependencies & Binutils
@@ -65,11 +65,13 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Automated Source Patching for Branch 23.0
+      - name: Automated Source Patching for Branch lineage-23.0
         run: |
           cd $GITHUB_WORKSPACE
-          
-          # 1. Patch fs/dlog_hook.c
+          git checkout -f
+          git clean -fd
+
+          # 1. Patch header magic untuk dlog_hook.c menggunakan Python
           python3 -c '
           path = "fs/dlog_hook.c"
           try:
@@ -97,7 +99,7 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c
+          # 2. Patch kernel/bpf/core.c dengan menyisipkan u64 tmp di fungsi BPF yang memuat div64_u64_rem
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
