@@ -99,18 +99,17 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c untuk mengatasi error label BPF pada Clang modern
+          # 2. Patch kernel/bpf/core.c untuk mengabaikan error label diagnostik
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
               with open(path, "r") as f:
                   content = f.read()
-              # Tambahkan flag untuk mengabaikan error label undeclared atau ubah penanganan BPF switch
-              if "#pragma clang diagnostic ignored \"-Wunknown-labels\"" not in content:
-                  content = "#pragma clang diagnostic ignored \"-Wunknown-labels\"\n" + content
+              if "#pragma clang diagnostic ignored \"-Wunknown-pragmas\"" not in content:
+                  content = "#pragma clang diagnostic ignored \"-Wunknown-pragmas\"\n" + content
               with open(path, "w") as f:
                   f.write(content)
-              print("Successfully patched kernel/bpf/core.c with diagnostic pragma")
+              print("Successfully patched kernel/bpf/core.c")
           except Exception as e:
               print(f"Skipping kernel/bpf/core.c patch: {e}")
           '
@@ -129,7 +128,7 @@ jobs:
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=unknown-labels -Wno-error=gnu-label-as-value" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
