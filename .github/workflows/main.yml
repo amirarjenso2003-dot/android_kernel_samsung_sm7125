@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: lineage-23.0
+          ref: '23.0'
           fetch-depth: 1
 
       - name: Install Build Dependencies & Binutils
@@ -65,13 +65,11 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Clean Reset and Robust Source Patching
+      - name: Automated Source Patching for Branch 23.0
         run: |
           cd $GITHUB_WORKSPACE
-          git checkout -f
-          git clean -fd
-
-          # 1. Patch header magic untuk dlog_hook.c menggunakan Python
+          
+          # 1. Patch fs/dlog_hook.c
           python3 -c '
           path = "fs/dlog_hook.c"
           try:
@@ -99,21 +97,22 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c dengan mendeklarasikan u64 tmp di dalam fungsi __bpf_prog_run
+          # 2. Patch kernel/bpf/core.c
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
               with open(path, "r") as f:
                   content = f.read()
-              import re
-              match = re.search(r"(unsigned int __bpf_prog_run[^{]*\{)", content)
-              if match and "u64 tmp" not in content:
-                  content = content.replace(match.group(1), match.group(1) + "\n\tu64 tmp = 0;")
-                  with open(path, "w") as f:
-                      f.write(content)
-                  print("Successfully injected u64 tmp into __bpf_prog_run")
+              idx = content.find("div64_u64_rem")
+              if idx != -1 and "u64 tmp" not in content:
+                  open_brace = content.rfind("{", 0, idx)
+                  if open_brace != -1:
+                      content = content[:open_brace+1] + "\n\tu64 tmp = 0;" + content[open_brace+1:]
+                      with open(path, "w") as f:
+                          f.write(content)
+                      print("Successfully injected u64 tmp into BPF function")
               else:
-                  print("Already patched or function header not found")
+                  print("Already patched or target function not found")
           except Exception as e:
               print(f"Skipping kernel/bpf/core.c patch: {e}")
           '
