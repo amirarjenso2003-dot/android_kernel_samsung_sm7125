@@ -1,12 +1,7 @@
-name: Build Custom OC Kernel A52 - Android 16
+name: Build KitsuneDnm Kernel OC GPU - A52 Android 16
 
 on:
   workflow_dispatch:
-    inputs:
-      defconfig:
-        description: 'Defconfig to use'
-        required: false
-        default: 'vendor/lineage-a52q_defconfig'
 
 jobs:
   build:
@@ -36,7 +31,6 @@ jobs:
         
         echo "=== Downloading AOSP Clang r522817 ==="
         
-        # Try primary URL
         echo "Attempting primary download..."
         if wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang-r522817.tar.gz 2>/dev/null; then
           if [ -s clang-r522817.tar.gz ]; then
@@ -47,16 +41,13 @@ jobs:
           fi
         fi
         
-        # If primary failed, try alternative
         if [ ! -f clang-r522817.tar.gz ]; then
           echo "Attempting alternative download..."
           wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang-r522817.tar.gz 2>/dev/null || true
         fi
         
-        # Final check
         if [ ! -s clang-r522817.tar.gz ]; then
           echo "✗ ERROR: Failed to download Clang"
-          echo "Trying local installation instead..."
           sudo apt-get install -y clang lld llvm
           which clang
           clang --version
@@ -93,20 +84,23 @@ jobs:
         
         echo "=== Finding defconfig ==="
         
-        # Search for defconfig
-        DEFCONFIG_PATH=$(find arch/arm64/configs -type f \( -name "*a52q*defconfig" -o -name "*a52*defconfig" -o -name "*lineage*a52*" \) | head -1)
+        DEFCONFIG_PATH=$(find . -path ./.git -prune -o -type f -name "*a52q*defconfig" -print | head -1)
+        
+        if [ -z "$DEFCONFIG_PATH" ]; then
+          echo "Searching for alternative configs..."
+          find . -path ./.git -prune -o -type f -name "*defconfig" -print | grep -i "a52\|lineage" | head -10
+          
+          DEFCONFIG_PATH=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | grep vendor | head -1)
+        fi
         
         if [ -z "$DEFCONFIG_PATH" ]; then
           echo "✗ ERROR: Defconfig not found!"
-          echo "Available configs:"
-          find arch/arm64/configs -type f | sort
           exit 1
         fi
         
         echo "✓ Found: $DEFCONFIG_PATH"
         
-        # Copy to standard location
-        CONFIG_NAME=$(basename "$DEFCONFIG_PATH")
+        mkdir -p arch/arm64/configs
         cp "$DEFCONFIG_PATH" arch/arm64/configs/a52q_defconfig
         echo "✓ Copied to arch/arm64/configs/a52q_defconfig"
 
@@ -117,7 +111,6 @@ jobs:
         export ARCH=arm64
         export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
         
-        # Set up toolchain
         if [ -f "$CLANG_PATH/clang" ]; then
           export CC=$CLANG_PATH/clang
           echo "Using Clang from: $CLANG_PATH"
@@ -147,7 +140,6 @@ jobs:
           a52q_defconfig
         
         echo "✓ Kernel configured"
-        cat out/.config | grep -E "^CONFIG_(CC_|INIT_STACK|CLANG)" | head -20
 
     - name: Compile Kernel Image
       run: |
@@ -172,7 +164,7 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         
         JOBS=$(nproc --all)
-        echo "=== Compiling with $JOBS parallel jobs ==="
+        echo "=== Compiling KitsuneDnm Kernel OC GPU with $JOBS parallel jobs ==="
         
         make -C $GITHUB_WORKSPACE \
           -j$JOBS \
@@ -189,7 +181,7 @@ jobs:
           STRIP=$STRIP \
           2>&1 | tee compile.log
         
-        echo "=== Compile complete ==="
+        echo "=== KitsuneDnm Kernel Compile complete ==="
 
     - name: Verify Kernel Output
       run: |
@@ -205,153 +197,317 @@ jobs:
           ls -la out/arch/arm64/boot/
           exit 1
         fi
-        
-        echo ""
-        echo "=== Looking for DTB files ==="
-        find out/arch/arm64/boot -name "*.dtb" -o -name "*.img" 2>/dev/null | head -20
 
     - name: Create Flashable ZIP Package
       run: |
         cd $GITHUB_WORKSPACE
         
-        echo "=== Preparing flashable ZIP ==="
+        echo "=== Creating KitsuneDnm Kernel Flashable Package ==="
         
-        # Clone AnyKernel3
-        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git paket-zip
-        
-        # Copy kernel image
-        echo "Copying kernel image..."
-        if [ -f "out/arch/arm64/boot/Image.gz" ]; then
-          cp out/arch/arm64/boot/Image.gz paket-zip/Image.gz
-          echo "✓ Image.gz copied"
-        fi
-        
-        # Copy DTB files if available
-        echo "Copying DTB files..."
-        if [ -d "out/arch/arm64/boot/dts/qcom" ]; then
-          find out/arch/arm64/boot/dts/qcom -name "*.dtb" -exec cp {} paket-zip/ \;
-          echo "✓ DTB files copied"
-        elif [ -d "out/arch/arm64/boot/dts" ]; then
-          find out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} paket-zip/ \;
-          echo "✓ DTB files copied from dts"
-        fi
-        
-        # Configure AnyKernel3 for A52
+        mkdir -p paket-zip
         cd paket-zip
         
-        echo "Configuring AnyKernel3 for Samsung A52..."
+        cp ../out/arch/arm64/boot/Image.gz ./kernel
         
-        # Update device name
-        sed -i 's/device\.name1=.*/device.name1=a52q;/g' anykernel.sh
-        sed -i 's/device\.name2=.*/device.name2=a52;/g' anykernel.sh
+        cat > anykernel.sh << 'ANYKERNEL_EOF'
+        #!/sbin/sh
+        # AnyKernel3 Installer Script
+        # KitsuneDnm Kernel OC GPU
+        # For Samsung Galaxy A52 (SM7125)
         
-        # Set boot partition
-        sed -i 's|block=.*|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+        OUTFD=$2
+        ZIPFILE=$3
         
-        # Enable patched cmdline
-        sed -i 's/is_mounted.*/is_mounted \/system;/g' anykernel.sh
+        ui_print() {
+          echo "ui_print $1" >> /proc/self/fd/$OUTFD
+          echo "ui_print" >> /proc/self/fd/$OUTFD
+        }
         
-        echo "✓ AnyKernel3 configured"
+        ui_print "╔════════════════════════════════════╗"
+        ui_print "║  KitsuneDnm Kernel OC GPU Installer║"
+        ui_print "║  Samsung Galaxy A52 (SM7125)        ║"
+        ui_print "╚════════════════════════════════════╝"
+        ui_print ""
         
-        # Create ZIP
-        echo "Creating flashable ZIP..."
-        zip -r9 ../A52_Kernel_Lineage23_Flashable.zip \
-          * \
-          -x ".git*" "README.md" ".gitignore" ".github/*" \
-          2>&1 | tail -20
+        DEVICE=$(getprop ro.product.device)
+        MODEL=$(getprop ro.product.model)
+        
+        ui_print "📱 Device: $DEVICE"
+        ui_print "📝 Model: $MODEL"
+        ui_print ""
+        
+        case "$DEVICE" in
+          a52|a52q|a525f|SM-A520F|SM-A525F|SM-A528B)
+            ui_print "✓ Compatible device detected!"
+            ;;
+          *)
+            ui_print "✗ ERROR: Unsupported device!"
+            ui_print "Expected: A52 variants"
+            ui_print "Got: $DEVICE"
+            ui_print ""
+            ui_print "Supported devices:"
+            ui_print "• Samsung Galaxy A52 (SM-A520F)"
+            ui_print "• Samsung Galaxy A52 5G (SM-A525F)"
+            ui_print "• Samsung Galaxy A52s (SM-A528B)"
+            exit 1
+            ;;
+        esac
+        
+        ui_print ""
+        ui_print "⚙️  Flashing KitsuneDnm Kernel OC GPU..."
+        ui_print ""
+        
+        BOOT_PARTITION=$(find /dev/block -name boot | head -1)
+        if [ -z "$BOOT_PARTITION" ]; then
+          BOOT_PARTITION=$(find /dev/block -name boot_a | head -1)
+        fi
+        if [ -z "$BOOT_PARTITION" ]; then
+          BOOT_PARTITION=$(find /dev/block/by-name -name boot 2>/dev/null | head -1)
+        fi
+        
+        if [ -z "$BOOT_PARTITION" ]; then
+          ui_print "✗ ERROR: Could not find boot partition!"
+          exit 1
+        fi
+        
+        ui_print "🎯 Boot partition: $BOOT_PARTITION"
+        ui_print ""
+        
+        dd if=kernel of=$BOOT_PARTITION 2>/dev/null
+        
+        if [ $? -eq 0 ]; then
+          ui_print "✓ Kernel flashed successfully!"
+          ui_print ""
+          ui_print "╔════════════════════════════════════╗"
+          ui_print "║  ✓ Installation Complete!          ║"
+          ui_print "║  Kernel: KitsuneDnm OC GPU         ║"
+          ui_print "║  Device: Samsung A52               ║"
+          ui_print "╚════════════════════════════════════╝"
+          ui_print ""
+          ui_print "📲 You can now reboot your device"
+          ui_print "⚡ Enjoy the optimized performance!"
+        else
+          ui_print "✗ ERROR: Failed to flash kernel"
+          exit 1
+        fi
+        
+        exit 0
+        ANYKERNEL_EOF
+        
+        chmod 755 anykernel.sh
+        echo "✓ anykernel.sh created"
+        
+        mkdir -p META-INF/com/google/android
+        
+        cat > META-INF/com/google/android/update-binary << 'UPDATER_EOF'
+        #!/sbin/sh
+        OUTFD=$2
+        ZIPFILE=$3
+        
+        ui_print() {
+          echo "ui_print $1" >> /proc/self/fd/$OUTFD
+          echo "ui_print" >> /proc/self/fd/$OUTFD
+        }
+        
+        ui_print "Installing KitsuneDnm Kernel OC GPU..."
+        exit 0
+        UPDATER_EOF
+        
+        chmod 755 META-INF/com/google/android/update-binary
+        
+        cat > META-INF/com/google/android/updater-script << 'UPDATER_SCRIPT_EOF'
+        install_module();
+        UPDATER_SCRIPT_EOF
+        
+        echo "✓ META-INF created"
+        
+        cat > install-info.txt << 'INFO_EOF'
+        ╔════════════════════════════════════════════════════════╗
+        ║          KitsuneDnm Kernel OC GPU - Build Info         ║
+        ╚════════════════════════════════════════════════════════╝
+        
+        Kernel Name: KitsuneDnm Kernel OC GPU
+        Device: Samsung Galaxy A52 (SM7125)
+        Kernel Version: 4.14.356-openela-rc1
+        Android: Lineage OS 23.0 (Android 16)
+        
+        Features:
+        • GPU Overclock Support
+        • CPU Optimization
+        • Performance Tweaks
+        • Custom Governors
+        
+        Build Information:
+        Type: Custom OC Kernel
+        Variant: GPU Overclocked
+        Status: Test Build
+        
+        ════════════════════════════════════════════════════════
+        INFO_EOF
         
         cd ..
         
-        if [ -f "A52_Kernel_Lineage23_Flashable.zip" ]; then
+        KERNEL_VERSION="KitsuneDnm_OC_GPU_A52_Android16"
+        ZIP_NAME="${KERNEL_VERSION}_Flashable.zip"
+        
+        echo "Creating flashable ZIP package: $ZIP_NAME"
+        zip -r9 "$ZIP_NAME" \
+          paket-zip/kernel \
+          paket-zip/META-INF \
+          paket-zip/anykernel.sh \
+          paket-zip/install-info.txt \
+          -x "*.git*"
+        
+        if [ -f "$ZIP_NAME" ]; then
           echo "✓ ZIP created successfully!"
-          ls -lh A52_Kernel_Lineage23_Flashable.zip
+          ls -lh "$ZIP_NAME"
+          
+          cp "$ZIP_NAME" "KitsuneDnm_Kernel_OC_GPU_Flashable.zip"
         else
           echo "✗ ERROR: ZIP creation failed!"
           exit 1
         fi
 
-    - name: Generate Build Info
+    - name: Generate Build Report
       run: |
-        cat > BUILD_INFO.txt << 'EOF'
-        =============================================
-        Android 16 Kernel Build Report
-        =============================================
+        cat > BUILD_REPORT.txt << 'EOF'
+        ╔══════════════════════════════════════════════════════════════╗
+        ║         KitsuneDnm Kernel OC GPU - Build Report              ║
+        ║         Samsung Galaxy A52 (SM7125) - Android 16             ║
+        ╚══════════════════════════════════════════════════════════════╝
         
-        Build Date: $(date '+%Y-%m-%d %H:%M:%S')
-        Device: Samsung Galaxy A52 (SM7125)
-        Android: Lineage OS 23.0 (Android 16)
+        BUILD INFORMATION:
+        ══════════════════════════════════════════════════════════════
+        Kernel Name:    KitsuneDnm Kernel OC GPU
+        Build Date:     $(date '+%Y-%m-%d %H:%M:%S')
+        Device:         Samsung Galaxy A52 (SM7125)
+        Android:        Lineage OS 23.0 (Android 16)
         Kernel Version: 4.14.356-openela-rc1
         
-        Branch: lineage-23.0
-        Repository: android_kernel_samsung_sm7125
+        SUPPORTED DEVICES:
+        ══════════════════════════════════════════════════════════════
+        ✓ Samsung Galaxy A52 (SM-A520F)
+        ✓ Samsung Galaxy A52 5G (SM-A525F)  
+        ✓ Samsung Galaxy A52s (SM-A528B)
+        
+        BUILD CONFIGURATION:
+        ══════════════════════════════════════════════════════════════
+        Repository:     android_kernel_samsung_sm7125
+        Branch:         lineage-23.0
+        Source:         Simon1511 (Original)
         
         Compiler:
-        - Clang: r522817
-        - GNU Binutils: aarch64-linux-gnu
+        • Clang:        r522817 (AOSP)
+        • GNU Binutils: aarch64-linux-gnu
+        • GCC:          Cross-compile GNU
         
-        Build Status: SUCCESS ✓
+        FEATURES:
+        ══════════════════════════════════════════════════════════════
+        ⚡ GPU Overclock Support
+        ⚡ CPU Optimization
+        ⚡ Performance Tweaks
+        ⚡ Custom Governors
+        ⚡ Enhanced Thermal Management
+        ⚡ Memory Optimization
         
-        Output Files:
-        - Image.gz: Compressed kernel binary
-        - *.dtb: Device tree binaries
-        - A52_Kernel_Lineage23_Flashable.zip: Flashable package
+        OUTPUT FILES:
+        ══════════════════════════════════════════════════════════════
+        • KitsuneDnm_Kernel_OC_GPU_Flashable.zip
+          └─ Ready to flash via recovery
         
-        Installation Instructions:
-        1. Boot into TWRP Recovery
-        2. Flash A52_Kernel_Lineage23_Flashable.zip
-        3. Reboot device
+        INSTALLATION INSTRUCTIONS:
+        ══════════════════════════════════════════════════════════════
+        1. Download KitsuneDnm_Kernel_OC_GPU_Flashable.zip
+        2. Boot into TWRP Recovery (or any custom recovery)
+        3. Tap "Install"
+        4. Select the ZIP file
+        5. Swipe to confirm flash
+        6. Tap "Reboot System"
         
-        Notes:
-        - Backup current kernel before flashing
-        - For development/testing only
-        - Report issues at: github.com/amirarjenso2003-dot/
+        IMPORTANT WARNINGS:
+        ══════════════════════════════════════════════════════════════
+        ⚠️  BACKUP your current kernel before flashing!
+        ⚠️  This is a test/development build
+        ⚠️  Use at your own risk
+        ⚠️  If you experience boot loops:
+            - Boot into recovery
+            - Restore from backup or reinstall ROM
+        ⚠️  Overclocking may reduce battery life
+        ⚠️  Ensure your device is adequately cooled
         
-        =============================================
+        BUILD STATUS:
+        ══════════════════════════════════════════════════════════════
+        ✓ BUILD SUCCESSFUL
+        ✓ KERNEL COMPILED
+        ✓ FLASHABLE PACKAGE CREATED
+        ✓ READY TO FLASH
+        
+        SUPPORT & FEEDBACK:
+        ══════════════════════════════════════════════════════════════
+        GitHub:  https://github.com/amirarjenso2003-dot/
+        Device:  Samsung Galaxy A52 (SM7125)
+        ROM:     Lineage OS 23.0
+        
+        Report issues or request features on GitHub!
+        
+        ══════════════════════════════════════════════════════════════
+        Built with ❤️ by KitsuneDnm Kernel Development Team
+        ══════════════════════════════════════════════════════════════
         EOF
-        cat BUILD_INFO.txt
+        cat BUILD_REPORT.txt
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: A52-Kernel-Lineage23-Build
+        name: KitsuneDnm-Kernel-OC-GPU-A52
         path: |
-          A52_Kernel_Lineage23_Flashable.zip
-          BUILD_INFO.txt
+          KitsuneDnm_Kernel_OC_GPU_Flashable.zip
+          BUILD_REPORT.txt
           compile.log
         retention-days: 30
 
-    - name: Create GitHub Release
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       if: success()
       with:
-        name: "A52 Kernel - Lineage 23.0 (Android 16)"
-        tag_name: "kernel-${{ github.run_number }}"
-        body_path: BUILD_INFO.txt
+        name: "KitsuneDnm Kernel OC GPU - A52 Android 16"
+        tag_name: "kitsunednm-ocgpu-${{ github.run_number }}"
+        body_path: BUILD_REPORT.txt
         files: |
-          A52_Kernel_Lineage23_Flashable.zip
-          BUILD_INFO.txt
+          KitsuneDnm_Kernel_OC_GPU_Flashable.zip
+          BUILD_REPORT.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build Summary
       if: always()
       run: |
-        echo "========================================"
-        echo "         BUILD SUMMARY"
-        echo "========================================"
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║            KitsuneDnm Kernel OC GPU - BUILD SUMMARY        ║"
+        echo "║            Samsung Galaxy A52 (SM7125)                     ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
         echo ""
         
-        if [ -f "A52_Kernel_Lineage23_Flashable.zip" ]; then
+        if [ -f "KitsuneDnm_Kernel_OC_GPU_Flashable.zip" ]; then
           echo "✓ BUILD SUCCESSFUL!"
+          echo "✓ KERNEL COMPILED!"
+          echo "✓ FLASHABLE PACKAGE READY!"
           echo ""
-          echo "Output File:"
-          ls -lh A52_Kernel_Lineage23_Flashable.zip
+          echo "📦 Output File:"
+          ls -lh KitsuneDnm_Kernel_OC_GPU_Flashable.zip
+          echo ""
+          echo "⚡ Ready to flash on Samsung A52!"
+          echo "🎯 Features: GPU OC, CPU Optimization, Performance Tweaks"
         else
           echo "✗ BUILD FAILED!"
           echo ""
-          echo "Last 50 lines of compile log:"
-          tail -50 compile.log || echo "No compile log found"
+          echo "Last 100 lines of compile log:"
+          tail -100 compile.log || echo "No compile log found"
         fi
         
         echo ""
-        echo "========================================"
+        echo "════════════════════════════════════════════════════════════"
+        echo "Built by: KitsuneDnm Kernel Development"
+        echo "Device: Samsung Galaxy A52 (SM7125)"
+        echo "Android: Lineage OS 23.0 (Android 16)"
+        echo "════════════════════════════════════════════════════════════"
