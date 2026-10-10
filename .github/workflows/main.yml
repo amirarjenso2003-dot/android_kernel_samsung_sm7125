@@ -26,11 +26,12 @@ jobs:
           sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler
           sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-      - name: Download AOSP Clang Toolchain
+      - name: Download AOSP Clang Toolchain (Verified Link)
         run: |
-          echo "📥 Downloading AOSP Clang..."
-          git clone --depth=1 https://github.com/chenxiaolong/Prebuilt-Clang.git clang || \
-          git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang
+          echo "📥 Downloading AOSP Clang r383902..."
+          git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang || \
+          git clone --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078.git clang
+          
           echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
           clang --version
 
