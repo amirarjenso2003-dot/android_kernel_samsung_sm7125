@@ -20,10 +20,19 @@ jobs:
           ref: lineage-23.0
           fetch-depth: 1
 
-      - name: Install deps
+      - name: Install Dependencies & GCC 9
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler
+          
+          # Menginstal GCC 9 dan G++ 9 yang kompatibel dengan source kernel lama
+          sudo apt-get install -y gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          
+          # Mengatur alias/symlink agar menggunakan versi 9
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-9 /usr/bin/aarch64-linux-gnu-gcc
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-g++-9 /usr/bin/aarch64-linux-gnu-g++
+          
+          aarch64-linux-gnu-gcc --version
 
       - name: Find and Validate Custom Defconfig
         run: |
@@ -75,23 +84,22 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Patch Source for GCC Compatibility
+      - name: Patch Source for BPF Compatibility
         run: |
           cd $GITHUB_WORKSPACE
-          # Menambahkan deklarasi u64 tmp di kernel/bpf/core.c jika belum ada untuk mengatasi error undeclared
           if [ -f "kernel/bpf/core.c" ]; then
             sed -i 's/div64_u64_rem(DST, IMM, &tmp);/u64 tmp = 0; div64_u64_rem(DST, IMM, \&tmp);/g' kernel/bpf/core.c || true
           fi
 
-      - name: Compile Kernel (GCC Mode)
+      - name: Compile Kernel (GCC 9 Mode)
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # Mengompilasi kernel menggunakan GCC murni dengan flag fgnu89-inline dan pengabaian warning
+          # Mengompilasi kernel menggunakan GCC 9 tanpa konflik standar kompiler modern
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -fgnu89-inline" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
