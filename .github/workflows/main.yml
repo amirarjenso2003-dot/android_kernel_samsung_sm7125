@@ -1,4 +1,4 @@
-name: Build KitsuneDnm_oc_gpu_700 Kernel - A52 Android 16
+name: Build KitsuneDnm_oc_gpu_700
 
 on:
   workflow_dispatch:
@@ -9,327 +9,70 @@ jobs:
     timeout-minutes: 120
 
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v4
-      with:
-        ref: lineage-23.0
-        fetch-depth: 1
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-23.0
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          bc build-essential libncurses5-dev libssl-dev \
-          bison flex git-core gnupg gperf curl wget zip \
-          libelf-dev python3 python-is-python3 device-tree-compiler \
-          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-    - name: Download Clang toolchain
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/toolchain
-        cd $GITHUB_WORKSPACE/toolchain
+      - name: Download Clang
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain
+          cd $GITHUB_WORKSPACE/toolchain
+          wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang.tar.gz 2>/dev/null && tar -xf clang.tar.gz && rm clang.tar.gz || sudo apt-get install -y clang
 
-        echo "Downloading clang r522817..."
-        if wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang.tar.gz 2>/dev/null; then
-          if [ -s clang.tar.gz ]; then
-            tar -xf clang.tar.gz
-            rm -f clang.tar.gz
+      - name: Find config
+        run: |
+          cd $GITHUB_WORKSPACE
+          DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*a52q*defconfig" -print | head -1)
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | head -1)
           fi
-        fi
+          mkdir -p arch/arm64/configs
+          cp "$DEFCONFIG" arch/arm64/configs/a52q_defconfig
+          echo "Config: $DEFCONFIG"
 
-        if [ ! -f "$GITHUB_WORKSPACE/toolchain/bin/clang" ]; then
-          sudo apt-get install -y clang lld llvm
-        fi
+      - name: Config
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          mkdir -p out
+          make -C . O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE a52q_defconfig
 
-    - name: Find defconfig
-      run: |
-        cd $GITHUB_WORKSPACE
+      - name: Set name
+        run: |
+          cd $GITHUB_WORKSPACE
+          sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
+          grep EXTRAVERSION Makefile | head -1
 
-        DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*a52q*defconfig" -print | head -1)
-        if [ -z "$DEFCONFIG" ]; then
-          DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | grep -i "a52\|lineage" | head -1)
-        fi
+      - name: Compile
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
+          [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
+          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump READELF=aarch64-linux-gnu-readelf STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
+          ls -lh out/arch/arm64/boot/Image.gz
 
-        if [ -z "$DEFCONFIG" ]; then
-          echo "Defconfig not found"
-          exit 1
-        fi
+      - name: Build ZIP
+        run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          cp out/arch/arm64/boot/Image.gz ak3/Image.gz
+          cd ak3
+          zip -r9 ../KitsuneDnm_oc_gpu_700_A52.zip . -x ".git/*" "README*" "LICENSE*"
+          cd ..
+          ls -lh KitsuneDnm_oc_gpu_700_A52.zip
 
-        echo "Using: $DEFCONFIG"
-        mkdir -p arch/arm64/configs
-        cp "$DEFCONFIG" arch/arm64/configs/a52q_defconfig
-
-    - name: Configure kernel
-      run: |
-        cd $GITHUB_WORKSPACE
-
-        export ARCH=arm64
-        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
-        [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export LD=aarch64-linux-gnu-ld
-        export AR=aarch64-linux-gnu-ar
-        export NM=aarch64-linux-gnu-nm
-        export OBJCOPY=aarch64-linux-gnu-objcopy
-        export OBJDUMP=aarch64-linux-gnu-objdump
-        export READELF=aarch64-linux-gnu-readelf
-        export STRIP=aarch64-linux-gnu-strip
-
-        mkdir -p out
-
-        make -C $GITHUB_WORKSPACE \
-          O=out \
-          ARCH=arm64 \
-          CROSS_COMPILE=$CROSS_COMPILE \
-          CC=$CC \
-          LD=$LD \
-          a52q_defconfig
-
-    - name: Set kernel name
-      run: |
-        cd $GITHUB_WORKSPACE
-        sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
-        grep "EXTRAVERSION" Makefile | head -1
-
-    - name: Compile kernel
-      run: |
-        cd $GITHUB_WORKSPACE
-
-        export ARCH=arm64
-        export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
-        [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export LD=aarch64-linux-gnu-ld
-        export AR=aarch64-linux-gnu-ar
-        export NM=aarch64-linux-gnu-nm
-        export OBJCOPY=aarch64-linux-gnu-objcopy
-        export OBJDUMP=aarch64-linux-gnu-objdump
-        export READELF=aarch64-linux-gnu-readelf
-        export STRIP=aarch64-linux-gnu-strip
-
-        make -C $GITHUB_WORKSPACE \
-          -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          CROSS_COMPILE=$CROSS_COMPILE \
-          CC=$CC \
-          LD=$LD \
-          AR=$AR \
-          NM=$NM \
-          OBJCOPY=$OBJCOPY \
-          OBJDUMP=$OBJDUMP \
-          READELF=$READELF \
-          STRIP=$STRIP \
-          2>&1 | tee compile.log
-
-        if [ ! -f "out/arch/arm64/boot/Image.gz" ]; then
-          echo "Image not found"
-          exit 1
-        fi
-
-        ls -lh out/arch/arm64/boot/Image.gz
-
-    - name: Build AnyKernel3 ZIP
-      run: |
-        cd $GITHUB_WORKSPACE
-
-        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-        cp out/arch/arm64/boot/Image.gz anykernel/Image.gz
-
-        cd anykernel
-
-        # PERBAIKAN: Update anykernel.sh dengan device check yang benar untuk A52
-        cat > anykernel.sh << 'EOF'
-#!/sbin/sh
-# KitsuneDnm_oc_gpu_700 Kernel Installer
-# Samsung Galaxy A52 (SM7125)
-
-OUTFD=$2
-ZIPFILE=$3
-
-ui_print() {
-  echo "ui_print $1" >> /proc/self/fd/$OUTFD
-  echo "ui_print" >> /proc/self/fd/$OUTFD
-}
-
-set_perm_recursive() {
-  local dir perm user group
-  dir=$1
-  perm=$2
-  user=$3
-  group=$4
-  
-  find "$dir" -type d -exec chmod "$perm" {} +
-  find "$dir" -type f -exec chmod "$perm" {} +
-}
-
-is_mounted() {
-  grep -q "^$1 " /proc/mounts
-  return $?
-}
-
-mount_part() {
-  if ! is_mounted "$1"; then
-    mkdir -p "$1"
-    mount "$2" "$1" 2>/dev/null
-  fi
-}
-
-ui_print "============================================"
-ui_print "  KitsuneDnm_oc_gpu_700 Kernel Installer"
-ui_print "  Samsung Galaxy A52 (SM7125)"
-ui_print "============================================"
-ui_print ""
-
-# Get device info
-DEVICE=$(getprop ro.product.device)
-MODEL=$(getprop ro.product.model)
-ANDROID=$(getprop ro.build.version.release)
-
-ui_print "Device: $DEVICE"
-ui_print "Model: $MODEL"
-ui_print "Android: $ANDROID"
-ui_print ""
-
-# Device check - support A52 variants
-case "$DEVICE" in
-  a52|a52q|a525f|a528|SM-A520F|SM-A525F|SM-A528B)
-    ui_print "✓ Device compatible"
-    ;;
-  *)
-    ui_print "✗ Device NOT supported"
-    ui_print "Got: $DEVICE"
-    ui_print "Expected: a52, a52q, a525f, a528, SM-A52*"
-    exit 1
-    ;;
-esac
-
-ui_print ""
-ui_print "Installing kernel..."
-ui_print ""
-
-# Mount partitions
-mount_part /system /dev/block/bootdevice/by-name/system
-mount_part /vendor /dev/block/bootdevice/by-name/vendor
-
-# Check if kernel image exists
-if [ ! -f "$ZIPDIR/Image.gz" ]; then
-  ui_print "✗ Error: kernel image not found"
-  exit 1
-fi
-
-# Find boot partition - try multiple methods
-BOOT=""
-for BLOCK in /dev/block/bootdevice/by-name/boot /dev/block/by-name/boot /dev/block/mmcblk0p* /dev/block/mmcblk1p*; do
-  if [ -e "$BLOCK" ]; then
-    if blockdev --getsize64 "$BLOCK" 2>/dev/null | grep -q .; then
-      BOOT="$BLOCK"
-      break
-    fi
-  fi
-done
-
-if [ -z "$BOOT" ]; then
-  ui_print "✗ Error: boot partition not found"
-  ui_print "Tried: /dev/block/bootdevice/by-name/boot"
-  ui_print "       /dev/block/by-name/boot"
-  ui_print "       /dev/block/mmcblk0p*"
-  ui_print "       /dev/block/mmcblk1p*"
-  exit 1
-fi
-
-ui_print "Boot partition: $BOOT"
-ui_print ""
-
-# Flash kernel - try gunzip first
-ui_print "Flashing kernel image..."
-
-if command -v gunzip >/dev/null 2>&1; then
-  gunzip -c "$ZIPDIR/Image.gz" > /tmp/kernel_image
-  dd if=/tmp/kernel_image of="$BOOT" bs=4096 2>/dev/null
-  rm -f /tmp/kernel_image
-else
-  dd if="$ZIPDIR/Image.gz" of="$BOOT" bs=4096 2>/dev/null
-fi
-
-if [ $? -eq 0 ]; then
-  ui_print "✓ Kernel flashed successfully"
-else
-  ui_print "✗ Flash failed"
-  exit 1
-fi
-
-ui_print ""
-ui_print "============================================"
-ui_print "✓ Installation Complete!"
-ui_print "✓ Kernel: KitsuneDnm_oc_gpu_700"
-ui_print "✓ Device: Samsung A52"
-ui_print "============================================"
-ui_print ""
-ui_print "You can reboot now"
-
-exit 0
-EOF
-
-        chmod 755 anykernel.sh
-
-        # Create proper META-INF structure
-        mkdir -p META-INF/com/google/android
-
-        cat > META-INF/com/google/android/update-binary << 'UPBIN'
-#!/sbin/sh
-OUTFD=$2
-ZIPFILE=$3
-
-ui_print() {
-  echo "ui_print $1" >> /proc/self/fd/$OUTFD
-  echo "ui_print" >> /proc/self/fd/$OUTFD
-}
-
-ui_print "KitsuneDnm_oc_gpu_700 Kernel"
-exit 0
-UPBIN
-
-        chmod 755 META-INF/com/google/android/update-binary
-
-        cat > META-INF/com/google/android/updater-script << 'UPSCR'
-install_module();
-UPSCR
-
-        # Buat ZIP
-        cd ..
-        rm -f KitsuneDnm_oc_gpu_700_A52_Flashable.zip
-        zip -r9 KitsuneDnm_oc_gpu_700_A52_Flashable.zip anykernel/ \
-          -x "anykernel/.git/*" "anykernel/.github/*" "anykernel/README*" "anykernel/LICENSE*"
-
-        if [ -f "KitsuneDnm_oc_gpu_700_A52_Flashable.zip" ]; then
-          echo "✓ ZIP created"
-          ls -lh KitsuneDnm_oc_gpu_700_A52_Flashable.zip
-          unzip -t KitsuneDnm_oc_gpu_700_A52_Flashable.zip | head -20
-        else
-          echo "✗ ZIP failed"
-          exit 1
-        fi
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: KitsuneDnm_oc_gpu_700_A52
-        path: |
-          KitsuneDnm_oc_gpu_700_A52_Flashable.zip
-          compile.log
-        retention-days: 30
-
-    - name: Summary
-      if: always()
-      run: |
-        echo "=== BUILD COMPLETE ==="
-        if [ -f "KitsuneDnm_oc_gpu_700_A52_Flashable.zip" ]; then
-          echo "✓ ZIP READY"
-          ls -lh KitsuneDnm_oc_gpu_700_A52_Flashable.zip
-        else
-          echo "✗ BUILD FAILED"
-          tail -50 compile.log || true
-        fi
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: KitsuneDnm_oc_gpu_700_A52
+          path: KitsuneDnm_oc_gpu_700_A52.zip
+          retention-days: 30
