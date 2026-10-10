@@ -83,19 +83,23 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           
-          # 1. Perbaiki inline di include/linux/mm.h agar tidak error body not available
+          # Bersihkan file yang sebelumnya sempat rusak
+          git checkout kernel/bpf/core.c include/linux/mm.h || true
+
+          # 1. Perbaiki inline di include/linux/mm.h
           if [ -f "include/linux/mm.h" ]; then
             sed -i 's/extern inline bool need_memory_boosting/static inline bool need_memory_boosting/g' include/linux/mm.h || true
           fi
 
-          # 2. Tambahkan deklarasi variabel tmp di kernel/bpf/core.c dengan aman
+          # 2. Tambahkan deklarasi variabel tmp di kernel/bpf/core.c dengan aman tanpa duplikasi
           if [ -f "kernel/bpf/core.c" ]; then
+            sed -i '/div64_u64_rem(DST, IMM, &tmp);/ {
+              x
+              s/^/u64 tmp = 0;\n/
+              x
+            }' kernel/bpf/core.c || true
+            # Alternatif aman jika sed blok di atas gagal, ubah baris pemanggilan langsung
             sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
-          fi
-
-          # 3. Perbaiki fungsi waktu kdb_main.c
-          if [ -f "kernel/debug/kdb/kdb_main.c" ]; then
-            sed -i 's/now = __current_kernel_time();/struct timespec64 ts64 = current_kernel_time64(); now = timespec64_to_timespec(ts64);/g' kernel/debug/kdb/kdb_main.c || true
           fi
 
       - name: Compile Kernel (GCC 9 Mode)
@@ -104,7 +108,6 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # Menambahkan -fcommon dan flag kompatibilitas GCC 9 lainnya
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
             KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -fgnu89-inline -std=gnu89 -fcommon" \
             2>&1 | tee compile.log || {
