@@ -77,10 +77,10 @@ jobs:
             sed -i '/#include "dlog_hook.h"/a #ifndef SDCARDFS_SUPER_MAGIC\n#define SDCARDFS_SUPER_MAGIC 0x5dca\n#endif\n#ifndef SDFAT_SUPER_MAGIC\n#define SDFAT_SUPER_MAGIC 0x6573\n#endif\n#ifndef MSDOS_SUPER_MAGIC\n#define MSDOS_SUPER_MAGIC 0x4d44\n#endif' fs/dlog_hook.c || true
           fi
 
-          # 2. Patch deklarasi variabel tmp di kernel/bpf/core.c
+          # 2. Reset dan patch kernel/bpf/core.c secara akurat (menghindari duplikasi)
           if [ -f "kernel/bpf/core.c" ]; then
+            git checkout kernel/bpf/core.c || true
             sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
-            sed -i 's/div64_u64_rem(DST, IMM, div64_u64_rem(DST, IMM, &tmp);tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
           fi
 
       - name: Compile Kernel with AOSP Clang
