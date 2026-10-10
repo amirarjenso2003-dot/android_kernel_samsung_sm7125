@@ -53,22 +53,53 @@ jobs:
             fi
           fi
 
-      - name: Find config
+      - name: Find and Validate Custom Defconfig
         run: |
           cd $GITHUB_WORKSPACE
-          DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*a52q*defconfig" -print | head -1)
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | grep vendor | head -1)
+          echo "📋 Searching for custom defconfig files..."
+
+          if [ -f "arch/arm64/configs/vendor/lineage-a52q-custom_defconfig" ]; then
+            echo "✓ Found custom defconfig: lineage-a52q-custom_defconfig"
+            DEFCONFIG="arch/arm64/configs/vendor/lineage-a52q-custom_defconfig"
+            DEFCONFIG_TYPE="CUSTOM"
+          elif [ -f "arch/arm64/configs/vendor/lineage-a52q_defconfig" ]; then
+            echo "✓ Found A52Q defconfig: lineage-a52q_defconfig"
+            DEFCONFIG="arch/arm64/configs/vendor/lineage-a52q_defconfig"
+            DEFCONFIG_TYPE="VENDOR"
+          else
+            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | head -1)
+            DEFCONFIG_TYPE="GENERIC"
+            echo "⚠️ Fallback to generic defconfig: $DEFCONFIG"
           fi
+
           if [ -z "$DEFCONFIG" ]; then
-            echo "✗ ERROR: Defconfig not found!"
+            echo "✗ ERROR: No defconfig found!"
             exit 1
           fi
+
           mkdir -p arch/arm64/configs
           cp "$DEFCONFIG" arch/arm64/configs/a52q_defconfig
-          echo "✓ Config: $DEFCONFIG"
 
-      - name: Config
+          echo "═══════════════════════════════════════════════"
+          echo "📦 DEFCONFIG INFORMATION"
+          echo "═══════════════════════════════════════════════"
+          echo "Type: $DEFCONFIG_TYPE"
+          echo "File: $DEFCONFIG"
+          echo "Size: $(wc -l < $DEFCONFIG) lines"
+          echo "Config: arch/arm64/configs/a52q_defconfig"
+          echo "═══════════════════════════════════════════════"
+
+          echo ""
+          echo "🔍 Validating key configurations..."
+          for config in CONFIG_ARM64 CONFIG_ARCH_QCOM CONFIG_PREEMPT CONFIG_CPU_FREQ CONFIG_MSM_ADRENO CONFIG_SCHED_WALT; do
+            if grep -q "^${config}=" "$DEFCONFIG" || grep -q "^${config}=y" "$DEFCONFIG"; then
+              echo "  ✓ $config"
+            else
+              echo "  ⚠️ $config (missing or disabled)"
+            fi
+          done
+
+      - name: Kernel Configuration
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
@@ -76,21 +107,25 @@ jobs:
           mkdir -p out
           make -C . O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE a52q_defconfig
 
-      - name: Set name
+      - name: Update Kernel Name
         run: |
           cd $GITHUB_WORKSPACE
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Compile
+      - name: Compile Kernel
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
           [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
-          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
-          
+
+          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC \
+            LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm \
+            OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump \
+            STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
+
           if [ -f "out/arch/arm64/boot/Image.gz" ]; then
             echo "✓ Kernel Image.gz found!"
             ls -lh out/arch/arm64/boot/Image.gz
@@ -100,54 +135,31 @@ jobs:
             exit 1
           fi
 
-      - name: Build ZIP
+      - name: Build Flashable ZIP
         run: |
           cd $GITHUB_WORKSPACE
+          if [ -d "ak3" ]; then
+            rm -rf ak3
+          fi
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cp out/arch/arm64/boot/Image.gz ak3/Image.gz
-          
-          # Konfigurasi device untuk A52
+
           cd ak3
           if grep -q "device.name1" anykernel.sh; then
             sed -i 's/device.name1=.*/device.name1=a52q/g' anykernel.sh
           else
             sed -i '/properties() {/a device.name1=a52q;\ndevice.name2=sm7125;' anykernel.sh
           fi
-          
+
           cd ..
           zip -r9 KitsuneDnm_oc_gpu_700_A52.zip ak3 -x "ak3/.git/*" "ak3/README*" "ak3/LICENSE*"
-          ls -lh KitsuneDnm_oc_gpu_700_A52.zip
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KitsuneDnm_oc_gpu_700_A52
-          path: KitsuneDnm_oc_gpu_700_A52.zip
+          path: |
+            KitsuneDnm_oc_gpu_700_A52.zip
+            out/arch/arm64/boot/Image.gz
+            compile.log
           retention-days: 30
-
-      - name: Build Summary
-        if: always()
-        run: |
-          echo "╔════════════════════════════════════════════════════════════╗"
-          echo "║         KitsuneDnm Kernel OC GPU - BUILD SUMMARY           ║"
-          echo "╚════════════════════════════════════════════════════════════╝"
-          echo ""
-          if [ -f "KitsuneDnm_oc_gpu_700_A52.zip" ]; then
-            echo "✓ BUILD SUCCESSFUL!"
-            echo ""
-            echo "📦 Artifact: KitsuneDnm_oc_gpu_700_A52.zip"
-            ls -lh KitsuneDnm_oc_gpu_700_A52.zip
-            echo ""
-            echo "🎯 Device: Samsung Galaxy A52 (A52Q)"
-            echo "⚡ Features: GPU OC, CPU Optimization, Performance Tweaks"
-            echo ""
-            echo "📲 Ready to flash on Samsung A52!"
-            echo "✨ Enjoy the optimized performance!"
-          else
-            echo "✗ BUILD FAILED!"
-            echo ""
-            if [ -f "compile.log" ]; then
-              echo "Last 100 lines of compile log:"
-              tail -100 compile.log
-            fi
-          fi
