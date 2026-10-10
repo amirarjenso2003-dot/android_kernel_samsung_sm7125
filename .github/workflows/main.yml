@@ -1,71 +1,4 @@
-name: Build KitsuneDnm_oc_gpu_700 (Clang)
-
-permissions:
-  contents: write
-  packages: write
-  actions: write
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: lineage-23.0
-          fetch-depth: 1
-
-      - name: Install Build Dependencies & Binutils
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler
-          sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
-
-      - name: Download AOSP Clang Toolchain
-        run: |
-          echo "📥 Downloading AOSP Clang r383902..."
-          git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang || \
-          git clone --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078.git clang
-          
-          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
-          clang --version
-
-      - name: Find and Validate Custom Defconfig
-        run: |
-          cd $GITHUB_WORKSPACE
-          echo "📋 Searching for custom defconfig files..."
-
-          if [ -f "arch/arm64/configs/vendor/lineage-a52q-custom_defconfig" ]; then
-            DEFCONFIG="arch/arm64/configs/vendor/lineage-a52q-custom_defconfig"
-          elif [ -f "arch/arm64/configs/vendor/lineage-a52q_defconfig" ]; then
-            DEFCONFIG="arch/arm64/configs/vendor/lineage-a52q_defconfig"
-          else
-            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | head -1)
-          fi
-
-          mkdir -p arch/arm64/configs
-          cp "$DEFCONFIG" arch/arm64/configs/a52q_defconfig
-
-      - name: Kernel Configuration
-        run: |
-          cd $GITHUB_WORKSPACE
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          mkdir -p out
-          make -C . O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE a52q_defconfig
-
-      - name: Set Kernel Version Name (KitsuneDnm_oc_gpu_700)
-        run: |
-          cd $GITHUB_WORKSPACE
-          sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
-          grep EXTRAVERSION Makefile | head -1
-
-      - name: Automated Source Patching for Branch lineage-23.0
+- name: Automated Source Patching for Branch lineage-23.0
         run: |
           cd $GITHUB_WORKSPACE
           git checkout -f
@@ -99,78 +32,22 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c untuk mengabaikan error label diagnostik
+          # 2. Patch kernel/bpf/core.c untuk mendefinisikan variabel tmp yang hilang
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
               with open(path, "r") as f:
                   content = f.read()
-              if "#pragma clang diagnostic ignored \"-Wunknown-pragmas\"" not in content:
-                  content = "#pragma clang diagnostic ignored \"-Wunknown-pragmas\"\n" + content
-              with open(path, "w") as f:
-                  f.write(content)
-              print("Successfully patched kernel/bpf/core.c")
+              # Cari target fungsi BPF dan tambahkan deklarasi u64 tmp jika belum ada
+              target = "div64_u64_rem"
+              if target in content and "u64 tmp" not in content:
+                  idx = content.find(target)
+                  open_brace = content.rfind("{", 0, idx)
+                  if open_brace != -1:
+                      content = content[:open_brace+1] + "\n\tu64 tmp = 0;" + content[open_brace+1:]
+                      with open(path, "w") as f:
+                          f.write(content)
+                      print("Successfully patched kernel/bpf/core.c with tmp variable")
           except Exception as e:
               print(f"Skipping kernel/bpf/core.c patch: {e}")
           '
-
-      - name: Compile Kernel with AOSP Clang
-        run: |
-          cd $GITHUB_WORKSPACE
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          make -C . -j$(nproc --all) O=out \
-            ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
-            2>&1 | tee compile.log || {
-              echo "========================================="
-              echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
-              echo "========================================="
-              grep -i "error:" compile.log || tail -n 50 compile.log
-              exit 1
-            }
-
-          if [ -f "out/arch/arm64/boot/Image.gz" ]; then
-            echo "✓ Kernel Image.gz found!"
-            ls -lh out/arch/arm64/boot/Image.gz
-          else
-            echo "✗ ERROR: Image.gz not found!"
-            ls -la out/arch/arm64/boot/ || true
-            exit 1
-          fi
-
-      - name: Build Flashable ZIP
-        run: |
-          cd $GITHUB_WORKSPACE
-          if [ -d "ak3" ]; then
-            rm -rf ak3
-          fi
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-          cp out/arch/arm64/boot/Image.gz ak3/Image.gz
-
-          cd ak3
-          if grep -q "device.name1" anykernel.sh; then
-            sed -i 's/device.name1=.*/device.name1=a52q/g' anykernel.sh
-          else
-            sed -i '/properties() {/a device.name1=a52q;\ndevice.name2=sm7125;' anykernel.sh
-          fi
-
-          cd ..
-          zip -r9 KitsuneDnm_oc_gpu_700_A52.zip ak3 -x "ak3/.git/*" "ak3/README*" "ak3/LICENSE*"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: KitsuneDnm_oc_gpu_700_A52
-          path: |
-            KitsuneDnm_oc_gpu_700_A52.zip
-            out/arch/arm64/boot/Image.gz
-            compile.log
-          retention-days: 30
