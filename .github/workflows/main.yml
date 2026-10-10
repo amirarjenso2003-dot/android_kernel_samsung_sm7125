@@ -103,13 +103,6 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Patch Makefile for Clang Warnings
-        run: |
-          cd $GITHUB_WORKSPACE
-          # Menghapus -Werror dan menambahkan flag pengabaian implicit-function-declaration
-          sed -i 's/-Werror//g' Makefile
-          echo "KBUILD_CFLAGS += -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" >> Makefile
-
       - name: Compile Kernel
         run: |
           cd $GITHUB_WORKSPACE
@@ -118,7 +111,9 @@ jobs:
           export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
           [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
 
+          # Menggunakan KCFLAGS untuk melewatkan error warning implisit tanpa merusak Makefile
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion" \
             LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm \
             OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump \
             STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log || {
