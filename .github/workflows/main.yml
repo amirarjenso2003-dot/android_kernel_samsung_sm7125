@@ -79,11 +79,24 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Clean Source Tree from Bad Patches
+      - name: Robust Source Patching for GCC 9
         run: |
           cd $GITHUB_WORKSPACE
-          git checkout kernel/bpf/core.c || true
-          git reset --hard HEAD || true
+          
+          # 1. Perbaiki inline di include/linux/mm.h agar tidak error body not available
+          if [ -f "include/linux/mm.h" ]; then
+            sed -i 's/extern inline bool need_memory_boosting/static inline bool need_memory_boosting/g' include/linux/mm.h || true
+          fi
+
+          # 2. Tambahkan deklarasi variabel tmp di kernel/bpf/core.c dengan aman
+          if [ -f "kernel/bpf/core.c" ]; then
+            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
+          fi
+
+          # 3. Perbaiki fungsi waktu kdb_main.c
+          if [ -f "kernel/debug/kdb/kdb_main.c" ]; then
+            sed -i 's/now = __current_kernel_time();/struct timespec64 ts64 = current_kernel_time64(); now = timespec64_to_timespec(ts64);/g' kernel/debug/kdb/kdb_main.c || true
+          fi
 
       - name: Compile Kernel (GCC 9 Mode)
         run: |
@@ -91,9 +104,9 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # Menambahkan flag standar kompilasi lama agar GCC 9 dapat membaca source kernel dengan mulus
+          # Menambahkan -fcommon dan flag kompatibilitas GCC 9 lainnya
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -fgnu89-inline -std=gnu89" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -fgnu89-inline -std=gnu89 -fcommon" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
