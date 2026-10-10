@@ -1,5 +1,10 @@
 name: Build KitsuneDnm_oc_gpu_700
 
+permissions:
+  contents: write
+  packages: write
+  actions: write
+
 on:
   workflow_dispatch:
 
@@ -13,28 +18,55 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: lineage-23.0
+          fetch-depth: 1
 
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu
 
       - name: Download Clang
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang.tar.gz 2>/dev/null && tar -xf clang.tar.gz && rm clang.tar.gz || sudo apt-get install -y clang
+          if wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang.tar.gz 2>/dev/null; then
+            if [ -s clang.tar.gz ]; then
+              echo "✓ Primary download successful"
+              tar -xf clang.tar.gz
+            else
+              echo "✗ Primary download failed (empty file)"
+              rm -f clang.tar.gz
+              wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang.tar.gz 2>/dev/null || true
+              if [ -s clang.tar.gz ]; then
+                tar -xf clang.tar.gz
+              fi
+            fi
+          else
+            wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang.tar.gz 2>/dev/null || true
+            if [ -s clang.tar.gz ]; then
+              tar -xf clang.tar.gz
+            else
+              echo "✗ ERROR: Failed to download Clang"
+              sudo apt-get install -y clang lld llvm
+              which clang
+              clang --version
+            fi
+          fi
 
       - name: Find config
         run: |
           cd $GITHUB_WORKSPACE
           DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*a52q*defconfig" -print | head -1)
           if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | head -1)
+            DEFCONFIG=$(find . -path ./.git -prune -o -type f -name "*defconfig" -print | grep vendor | head -1)
+          fi
+          if [ -z "$DEFCONFIG" ]; then
+            echo "✗ ERROR: Defconfig not found!"
+            exit 1
           fi
           mkdir -p arch/arm64/configs
           cp "$DEFCONFIG" arch/arm64/configs/a52q_defconfig
-          echo "Config: $DEFCONFIG"
+          echo "✓ Config: $DEFCONFIG"
 
       - name: Config
         run: |
@@ -57,8 +89,16 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
           [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
-          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump READELF=aarch64-linux-gnu-readelf STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
-          ls -lh out/arch/arm64/boot/Image.gz
+          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log
+          
+          if [ -f "out/arch/arm64/boot/Image.gz" ]; then
+            echo "✓ Kernel Image.gz found!"
+            ls -lh out/arch/arm64/boot/Image.gz
+          else
+            echo "✗ ERROR: Image.gz not found!"
+            ls -la out/arch/arm64/boot/
+            exit 1
+          fi
 
       - name: Build ZIP
         run: |
@@ -66,23 +106,48 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cp out/arch/arm64/boot/Image.gz ak3/Image.gz
           
-          # Solusi aman: Memasukkan nama perangkat a52q langsung ke dalam anykernel.sh
+          # Konfigurasi device untuk A52
           cd ak3
           if grep -q "device.name1" anykernel.sh; then
             sed -i 's/device.name1=.*/device.name1=a52q/g' anykernel.sh
           else
-            # Jika properti device belum ada, tambahkan di dalam fungsi properties
             sed -i '/properties() {/a device.name1=a52q;\ndevice.name2=sm7125;' anykernel.sh
           fi
           
           cd ..
-          zip -r9 ../KitsuneDnm_oc_gpu_700_A52.zip . -x ".git/*" "README*" "LICENSE*"
-          cd ..
+          zip -r9 KitsuneDnm_oc_gpu_700_A52.zip ak3 -x "ak3/.git/*" "ak3/README*" "ak3/LICENSE*"
           ls -lh KitsuneDnm_oc_gpu_700_A52.zip
 
-      - name: Upload
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KitsuneDnm_oc_gpu_700_A52
           path: KitsuneDnm_oc_gpu_700_A52.zip
           retention-days: 30
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║         KitsuneDnm Kernel OC GPU - BUILD SUMMARY           ║"
+          echo "╚════════════════════════════════════════════════════════════╝"
+          echo ""
+          if [ -f "KitsuneDnm_oc_gpu_700_A52.zip" ]; then
+            echo "✓ BUILD SUCCESSFUL!"
+            echo ""
+            echo "📦 Artifact: KitsuneDnm_oc_gpu_700_A52.zip"
+            ls -lh KitsuneDnm_oc_gpu_700_A52.zip
+            echo ""
+            echo "🎯 Device: Samsung Galaxy A52 (A52Q)"
+            echo "⚡ Features: GPU OC, CPU Optimization, Performance Tweaks"
+            echo ""
+            echo "📲 Ready to flash on Samsung A52!"
+            echo "✨ Enjoy the optimized performance!"
+          else
+            echo "✗ BUILD FAILED!"
+            echo ""
+            if [ -f "compile.log" ]; then
+              echo "Last 100 lines of compile log:"
+              tail -100 compile.log
+            fi
+          fi
