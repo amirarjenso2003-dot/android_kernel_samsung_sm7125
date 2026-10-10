@@ -66,11 +66,13 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cp out/arch/arm64/boot/Image.gz ak3/Image.gz
           
-          # Menyesuaikan anykernel.sh agar mengenali a52q dan sm7125
+          # Solusi aman: Memasukkan nama perangkat a52q langsung ke dalam anykernel.sh
           cd ak3
-          if [ -f "anykernel.sh" ]; then
+          if grep -q "device.name1" anykernel.sh; then
             sed -i 's/device.name1=.*/device.name1=a52q/g' anykernel.sh
-            sed -i 's/device.name2=.*/device.name2=sm7125/g' anykernel.sh
+          else
+            # Jika properti device belum ada, tambahkan di dalam fungsi properties
+            sed -i '/properties() {/a device.name1=a52q;\ndevice.name2=sm7125;' anykernel.sh
           fi
           
           cd ..
