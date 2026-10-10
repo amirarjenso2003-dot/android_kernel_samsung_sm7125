@@ -23,35 +23,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu
-
-      - name: Download Clang
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain
-          cd $GITHUB_WORKSPACE/toolchain
-          if wget -q --timeout=30 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" -O clang.tar.gz 2>/dev/null; then
-            if [ -s clang.tar.gz ]; then
-              echo "✓ Primary download successful"
-              tar -xf clang.tar.gz
-            else
-              echo "✗ Primary download failed (empty file)"
-              rm -f clang.tar.gz
-              wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang.tar.gz 2>/dev/null || true
-              if [ -s clang.tar.gz ]; then
-                tar -xf clang.tar.gz
-              fi
-            fi
-          else
-            wget -q --timeout=30 "https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/releases/download/lineage-20/clang.tar.gz" -O clang.tar.gz 2>/dev/null || true
-            if [ -s clang.tar.gz ]; then
-              tar -xf clang.tar.gz
-            else
-              echo "✗ ERROR: Failed to download Clang"
-              sudo apt-get install -y clang lld llvm
-              which clang
-              clang --version
-            fi
-          fi
+          sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Find and Validate Custom Defconfig
         run: |
@@ -103,20 +75,16 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Compile Kernel
+      - name: Compile Kernel (GCC Mode)
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_PATH=$GITHUB_WORKSPACE/toolchain/bin
-          [ -f "$CLANG_PATH/clang" ] && export CC="$CLANG_PATH/clang" || export CC="clang"
 
-          # Menggunakan KCFLAGS untuk melewatkan error warning implisit tanpa merusak Makefile
-          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE CC=$CC \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion" \
-            LD=aarch64-linux-gnu-ld AR=aarch64-linux-gnu-ar NM=aarch64-linux-gnu-nm \
-            OBJCOPY=aarch64-linux-gnu-objcopy OBJDUMP=aarch64-linux-gnu-objdump \
-            STRIP=aarch64-linux-gnu-strip 2>&1 | tee compile.log || {
+          # Mengompilasi kernel menggunakan GCC murni yang kompatibel dengan source Samsung
+          make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
+            2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
               echo "========================================="
