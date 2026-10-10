@@ -28,8 +28,9 @@ jobs:
 
       - name: Download AOSP Clang Toolchain
         run: |
-          echo "📥 Cloning AOSP Clang..."
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang
+          echo "📥 Downloading AOSP Clang..."
+          git clone --depth=1 https://github.com/chenxiaolong/Prebuilt-Clang.git clang || \
+          git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang
           echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
           clang --version
 
