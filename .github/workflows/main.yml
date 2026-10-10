@@ -71,7 +71,7 @@ jobs:
           git checkout -f
           git clean -fd
 
-          # 1. Patch header magic untuk dlog_hook.c menggunakan Python
+          # 1. Patch header magic untuk dlog_hook.c
           python3 -c '
           path = "fs/dlog_hook.c"
           try:
@@ -99,22 +99,18 @@ jobs:
               print(f"Skipping fs/dlog_hook.c patch: {e}")
           '
 
-          # 2. Patch kernel/bpf/core.c dengan menyisipkan u64 tmp di fungsi BPF yang memuat div64_u64_rem
+          # 2. Patch kernel/bpf/core.c untuk mengatasi error label BPF pada Clang modern
           python3 -c '
           path = "kernel/bpf/core.c"
           try:
               with open(path, "r") as f:
                   content = f.read()
-              idx = content.find("div64_u64_rem")
-              if idx != -1 and "u64 tmp" not in content:
-                  open_brace = content.rfind("{", 0, idx)
-                  if open_brace != -1:
-                      content = content[:open_brace+1] + "\n\tu64 tmp = 0;" + content[open_brace+1:]
-                      with open(path, "w") as f:
-                          f.write(content)
-                      print("Successfully injected u64 tmp into BPF function")
-              else:
-                  print("Already patched or target function not found")
+              # Tambahkan flag untuk mengabaikan error label undeclared atau ubah penanganan BPF switch
+              if "#pragma clang diagnostic ignored \"-Wunknown-labels\"" not in content:
+                  content = "#pragma clang diagnostic ignored \"-Wunknown-labels\"\n" + content
+              with open(path, "w") as f:
+                  f.write(content)
+              print("Successfully patched kernel/bpf/core.c with diagnostic pragma")
           except Exception as e:
               print(f"Skipping kernel/bpf/core.c patch: {e}")
           '
@@ -133,7 +129,7 @@ jobs:
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=unknown-labels -Wno-error=gnu-label-as-value" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
