@@ -24,14 +24,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler
-          
-          # Menginstal GCC 9 dan G++ 9 yang kompatibel dengan source kernel lama
           sudo apt-get install -y gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu binutils-aarch64-linux-gnu
-          
-          # Mengatur alias/symlink agar menggunakan versi 9
           sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-9 /usr/bin/aarch64-linux-gnu-gcc
           sudo ln -sf /usr/bin/aarch64-linux-gnu-g++-9 /usr/bin/aarch64-linux-gnu-g++
-          
           aarch64-linux-gnu-gcc --version
 
       - name: Find and Validate Custom Defconfig
@@ -84,11 +79,11 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Patch Source for BPF Compatibility
+      - name: Patch Source for GCC 9 Compatibility
         run: |
           cd $GITHUB_WORKSPACE
           if [ -f "kernel/bpf/core.c" ]; then
-            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/u64 tmp = 0; div64_u64_rem(DST, IMM, \&tmp);/g' kernel/bpf/core.c || true
+            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
           fi
 
       - name: Compile Kernel (GCC 9 Mode)
@@ -97,9 +92,9 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # Mengompilasi kernel menggunakan GCC 9 tanpa konflik standar kompiler modern
+          # Menambahkan -fgnu89-inline agar fungsi inline lama kompatibel dengan GCC 9
           make -C . -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
-            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types" \
+            KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -fgnu89-inline" \
             2>&1 | tee compile.log || {
               echo "========================================="
               echo "❌ KOMPILASI GAGAL! INI PESAN ERRORNYA:"
