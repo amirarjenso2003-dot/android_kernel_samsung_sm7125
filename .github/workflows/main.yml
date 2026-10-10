@@ -26,7 +26,7 @@ jobs:
           sudo apt-get install -y bc build-essential libncurses5-dev libssl-dev bison flex git-core gnupg gperf curl wget zip libelf-dev python3 python-is-python3 device-tree-compiler
           sudo apt-get install -y binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
-      - name: Download AOSP Clang Toolchain (Verified Link)
+      - name: Download AOSP Clang Toolchain
         run: |
           echo "📥 Downloading AOSP Clang r383902..."
           git clone --depth=1 https://gitlab.com/ThankYouMario/android_prebuilts_clang_host_linux-x86_clang-r383902.git clang || \
@@ -64,6 +64,21 @@ jobs:
           cd $GITHUB_WORKSPACE
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
+
+      - name: Clean Reset and Robust Source Patching
+        run: |
+          cd $GITHUB_WORKSPACE
+          git checkout -f
+          git clean -fd
+
+          if [ -f "fs/dlog_hook.c" ]; then
+            sed -i '/#include/a #include <linux/magic.h>' fs/dlog_hook.c || true
+            sed -i '/#include "dlog_hook.h"/a #ifndef SDCARDFS_SUPER_MAGIC\n#define SDCARDFS_SUPER_MAGIC 0x5dca\n#endif\n#ifndef SDFAT_SUPER_MAGIC\n#define SDFAT_SUPER_MAGIC 0x6573\n#endif\n#ifndef MSDOS_SUPER_MAGIC\n#define MSDOS_SUPER_MAGIC 0x4d44\n#endif' fs/dlog_hook.c || true
+          fi
+
+          if [ -f "kernel/bpf/core.c" ]; then
+            sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
+          fi
 
       - name: Compile Kernel with AOSP Clang
         run: |
