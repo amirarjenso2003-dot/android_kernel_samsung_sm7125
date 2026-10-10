@@ -79,26 +79,21 @@ jobs:
           sed -i 's/EXTRAVERSION = .*/EXTRAVERSION = -KitsuneDnm_oc_gpu_700/' Makefile
           grep EXTRAVERSION Makefile | head -1
 
-      - name: Robust Source Patching for GCC 9
+      - name: Clean Reset and Robust Source Patching
         run: |
           cd $GITHUB_WORKSPACE
           
-          # Bersihkan file yang sebelumnya sempat rusak
-          git checkout kernel/bpf/core.c include/linux/mm.h || true
+          # Reset total agar file kembali bersih dari sisa patch yang rusak
+          git checkout -f
+          git clean -fd
 
-          # 1. Perbaiki inline di include/linux/mm.h
+          # 1. Perbaiki inline di include/linux/mm.h agar warning/error hilang
           if [ -f "include/linux/mm.h" ]; then
             sed -i 's/extern inline bool need_memory_boosting/static inline bool need_memory_boosting/g' include/linux/mm.h || true
           fi
 
-          # 2. Tambahkan deklarasi variabel tmp di kernel/bpf/core.c dengan aman tanpa duplikasi
+          # 2. Perbaiki fungsi bpf/core.c dengan aman tanpa duplikasi baris
           if [ -f "kernel/bpf/core.c" ]; then
-            sed -i '/div64_u64_rem(DST, IMM, &tmp);/ {
-              x
-              s/^/u64 tmp = 0;\n/
-              x
-            }' kernel/bpf/core.c || true
-            # Alternatif aman jika sed blok di atas gagal, ubah baris pemanggilan langsung
             sed -i 's/div64_u64_rem(DST, IMM, &tmp);/{ u64 tmp = 0; div64_u64_rem(DST, IMM, &tmp); }/g' kernel/bpf/core.c || true
           fi
 
